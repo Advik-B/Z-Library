@@ -3,4 +3,7 @@ project(Z_Library)
 
 set(CMAKE_CXX_STANDARD 20)
 
-add_executable(Z_Library main.cpp)
+file(GLOB_RECURSE SOURCES "src/*.cpp")
+file(GLOB_RECURSE HEADERS "include/*.hpp")
+
+add_executable(Z_Library ${SOURCES} ${HEADERS})
