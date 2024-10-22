@@ -22,10 +22,6 @@ const char* test() {
     const lxb_char_t *tag_name = lxb_dom_element_qualified_name(lxb_dom_interface_element(document->body),
                                                                 NULL);
 
-    for (int i = 0; i < strlen(reinterpret_cast<const char *>(tag_name)); i++) {
-        std::cout << tag_name[i];
-    }
-
     lxb_html_document_destroy(document);
-    return "Hello, World!";
+    return std::string(reinterpret_cast<const char *>(tag_name)).c_str();
 }
