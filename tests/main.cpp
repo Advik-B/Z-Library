@@ -4,9 +4,9 @@
 
 int main()
 {
-    auto backend = std::make_unique<z_library::CPR_backend>();
-    std::string url = "https://www.google.com";
-    std::string data = backend->get_data(url);
+    const auto backend = std::make_unique<z_library::CPR_backend>();
+    const std::string url = "https://httpbin.org/get";
+    const std::string data = backend->get_data(url);
     std::cout << data << std::endl;
     return 0;
 }
