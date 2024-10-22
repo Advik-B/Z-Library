@@ -11,8 +11,11 @@
 
 namespace z_library {
     // CPR Backend which inherits from z_cache
-    class cpr_backend : z_backend_scaffold {
+    class CPR_backend : z_backend_scaffold {
+    public:
         std::string get_data(const std::string &url);
+
+        // Default Constructor, (do not delete)
     };
 }
 
