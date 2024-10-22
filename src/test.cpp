@@ -1,6 +1,9 @@
 #include "test.hpp"
+
+#include <iostream>
 #include <lexbor/html/parser.h>
 #include <lexbor/html/interfaces/document.h>
+#include <lexbor/html/interfaces/element.h>
 
 const char* test() {
     static const lxb_char_t html[] = "<div>Works fine!</div>";
@@ -19,7 +22,9 @@ const char* test() {
     const lxb_char_t *tag_name = lxb_dom_element_qualified_name(lxb_dom_interface_element(document->body),
                                                                 NULL);
 
-    printf("Element tag name: %p\n", tag_name);
+    for (int i = 0; i < strlen(reinterpret_cast<const char *>(tag_name)); i++) {
+        std::cout << tag_name[i];
+    }
 
     lxb_html_document_destroy(document);
     return "Hello, World!";
