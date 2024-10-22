@@ -1,8 +1,12 @@
 #include <iostream>
-#include <test.hpp>
+#include <z-library/backend/cpr_backend.hpp>
+#include <memory>
 
 int main()
 {
-    std::cout << test() << std::endl;
+    auto backend = std::make_unique<z_library::CPR_backend>();
+    std::string url = "https://www.google.com";
+    std::string data = backend->get_data(url);
+    std::cout << data << std::endl;
     return 0;
 }
