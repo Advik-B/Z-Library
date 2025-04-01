@@ -1,4 +1,4 @@
-__version__ = "1.1.0"
+__version__ = "1.5.0"
 
 from .models import BookSearchResult, Category, DownloadFormat, BookDetails
 from .exceptions import (
