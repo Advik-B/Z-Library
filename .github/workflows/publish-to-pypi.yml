@@ -1,0 +1,50 @@
+# .github/workflows/publish-to-pypi.yml
+
+name: Publish Python Package to PyPI
+
+# Trigger the workflow on pushes to tags matching 'v*' (e.g., v1.0.0, v1.1.0rc1)
+on:
+  push:
+    tags:
+      - 'v*' # Matches tags starting with 'v'
+
+permissions: read-all # Default read permissions
+
+jobs:
+  build-and-publish:
+    name: Build and publish Python distributions to PyPI
+    runs-on: ubuntu-latest
+    # Define environment for PyPI Trusted Publishing
+    environment:
+      name: pypi # Needs to match the environment name configured in PyPI
+      url: https://pypi.org/p/zlibrary-sync # Optional: Link displayed in GitHub UI
+
+    # Grant permission for the job to request an OpenID Connect token
+    permissions:
+      id-token: write # IMPORTANT: Required for OIDC Trusted Publishing
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11' # Choose a recent Python version for building
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --upgrade setuptools wheel twine build
+
+      - name: Build package distributions
+        run: python -m build # Uses build module, recommended over setup.py directly
+
+        # --- Optional: Verify built packages (highly recommended) ---
+        # - name: Verify distributions with twine check
+        #   run: twine check dist/*
+
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # No password/token needed here - it uses the OIDC token automatically
+        # It will publish files found in the 'dist/' directory
