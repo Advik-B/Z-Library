@@ -1,8 +1,9 @@
 # Z-Library API
-
+<!--
 [![PyPI version](https://badge.fury.io/py/zlibrary-sync.svg)](https://badge.fury.io/py/zlibrary-sync)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python Version](https://img.shields.io/pypi/pyversions/zlibrary-sync.svg)](https://pypi.org/project/zlibrary-sync/)
+!-->
 
 A **synchronous** Python library for interacting with the unofficial Z-Library web interface. It allows you to programmatically search for books, retrieve detailed information, and download files using standard blocking I/O operations.
 
