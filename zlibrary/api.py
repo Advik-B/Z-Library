@@ -306,64 +306,96 @@ class ZLibraryAPI:
             soup = BeautifulSoup(response.text, 'html.parser')
             data_dict: Dict[str, Any] = {}
 
-            # --- Extract Details (Most logic remains the same) ---
+            # --- Extract Details ---
             book_id_match = re.search(r'/book/(\d+)', book_url)
             data_dict['book_id'] = book_id_match.group(1) if book_id_match else None
-            # ... (Title, Author, Description, Ratings, Properties Box, Cover Image logic remains the same as before) ...
-            # --- Start of existing parsing logic ---
-            title_tag = soup.find('h1', itemprop='name') or soup.find('h1', class_='book-title');
+            title_tag = soup.find('h1', itemprop='name') or soup.find('h1', class_='book-title')
             data_dict['title'] = title_tag.get_text(strip=True) if title_tag else "Title N/A"
-            main_content = soup.find('div', class_='book-details-container') or soup
+            main_content = soup.find('div', class_='book-details-container') or soup # Use main content area or fallback
 
-            # Author parsing
-            author_container = main_content.find('div', class_='book-details-property-author');
-            author_tag = None
-            if author_container: author_tag = author_container.find('a', href=re.compile(r'/g/|/authors/'))
-            if not author_tag: author_tag = main_content.find('a', itemprop='author', href=re.compile(r'/g/|/authors/'))
-            if not author_tag: author_tag = main_content.find(string=re.compile(r'\bAuthor(s)?:\b', re.I))
-            if author_tag:
-                author_parent = author_tag.find_parent();
-                author_link = author_parent.find('a', href=re.compile(r'/g/|/authors/')) if author_parent else None
-                if author_link:
-                    data_dict['author'] = author_link.get_text(strip=True);
-                    href = author_link.get('href')
-                    if href: data_dict['author_url'] = urljoin(self.base_url, href)
-                elif author_parent:
-                    value_tag = author_parent.find(class_=re.compile(r'property[_-]value', re.I));
-                    data_dict[
-                        'author'] = value_tag.get_text(strip=True) if value_tag else None
+            # --- Author Parsing (REVISED SECTION) ---
+            data_dict['author'] = None # Initialize
+            data_dict['author_url'] = None
+
+            # Strategy 1 (NEW): Look for <i><a> immediately after <h1> title
+            if title_tag:
+                author_italic_tag = title_tag.find_next_sibling('i')
+                if author_italic_tag:
+                    # Look for an <a> tag within the <i> tag, preferably with class 'color1' or a relevant href
+                    author_link_tag = author_italic_tag.find('a', class_='color1', href=re.compile(r'/author/|/g/'))
+                    if not author_link_tag: # Fallback if class/href combo fails, just look for any <a> in the <i>
+                         author_link_tag = author_italic_tag.find('a')
+
+                    if author_link_tag:
+                        data_dict['author'] = author_link_tag.get_text(strip=True)
+                        href = author_link_tag.get('href')
+                        if href:
+                            data_dict['author_url'] = urljoin(self.base_url, href)
+
+            # Strategy 2 (Fallback): Look within property list (less reliable for author name)
+            if not data_dict.get('author'):
+                prop_container = soup.find('div', class_='book-details-properties') or soup
+                for tag in prop_container.select('.properties .property, .bookProperty, .property-row'):
+                     label_tag = tag.find(class_=re.compile(r'property[_-]label', re.I)) or tag.find('dt')
+                     value_tag = tag.find(class_=re.compile(r'property[_-]value', re.I)) or tag.find('dd')
+                     if label_tag and value_tag:
+                          label_raw = label_tag.get_text(strip=True).lower()
+                          if 'author' in label_raw:
+                               author_link_in_prop = value_tag.find('a', href=re.compile(r'/author/|/g/'))
+                               if author_link_in_prop:
+                                   data_dict['author'] = author_link_in_prop.get_text(strip=True)
+                                   href = author_link_in_prop.get('href')
+                                   if href and not data_dict.get('author_url'):
+                                       data_dict['author_url'] = urljoin(self.base_url, href)
+                                   break # Found author link in properties
+                               else:
+                                   # Fallback to plain text in property if no link
+                                   author_text = value_tag.get_text(strip=True)
+                                   if author_text: # Ensure it's not empty
+                                        data_dict['author'] = author_text
+                                        break # Found author text in properties
+
+            # Strategy 3 (Fallback): Look for itemprop="author" specifically
+            if not data_dict.get('author'):
+                author_itemprop_tag = main_content.find(itemprop='author')
+                if author_itemprop_tag:
+                    if author_itemprop_tag.name == 'a' and author_itemprop_tag.has_attr('href'):
+                         data_dict['author'] = author_itemprop_tag.get_text(strip=True)
+                         if not data_dict.get('author_url'): data_dict['author_url'] = urljoin(self.base_url, author_itemprop_tag['href'])
+                    elif author_itemprop_tag.name in ['span', 'div']:
+                         inner_link = author_itemprop_tag.find('a', href=re.compile(r'/author/|/g/'))
+                         if inner_link:
+                              data_dict['author'] = inner_link.get_text(strip=True)
+                              if not data_dict.get('author_url'): data_dict['author_url'] = urljoin(self.base_url, inner_link['href'])
+                         else: data_dict['author'] = author_itemprop_tag.get_text(strip=True)
+
+            # --- End of Author Parsing ---
 
             # Description
-            desc_tag = main_content.find('div', itemprop='description') or main_content.find('div',
-                                                                                             id='bookDescriptionBox') or main_content.find(
-                'div', class_='description-box')
+            desc_tag = main_content.find('div', itemprop='description') or main_content.find('div', id='bookDescriptionBox') or main_content.find('div', class_='description-box')
             data_dict['description'] = desc_tag.get_text(strip=True) if desc_tag else None
 
             # Ratings
-            rating_interest_tag = soup.find(class_='book-rating-interest-score');
-            data_dict['rating_interest'] = rating_interest_tag.get_text(strip=True) if rating_interest_tag else None
-            rating_quality_tag = soup.find(class_='book-rating-quality-score');
-            data_dict['rating_quality'] = rating_quality_tag.get_text(strip=True) if rating_quality_tag else None
+            rating_interest_tag = soup.find(class_='book-rating-interest-score'); data_dict['rating_interest'] = rating_interest_tag.get_text(strip=True) if rating_interest_tag else None
+            rating_quality_tag = soup.find(class_='book-rating-quality-score'); data_dict['rating_quality'] = rating_quality_tag.get_text(strip=True) if rating_quality_tag else None
 
-            # Properties Box
-            categories_list: List[Category] = [];
-            prop_container = soup.find('div', class_='book-details-properties') or soup
+            # Properties Box (excluding Author handled above)
+            categories_list: List[Category] = []; prop_container = soup.find('div', class_='book-details-properties') or soup
             prop_tags = prop_container.select('.properties .property, .bookProperty, .property-row')
 
             for tag in prop_tags:
                 label_tag = tag.find(class_=re.compile(r'property[_-]label', re.I)) or tag.find('dt')
                 value_tag = tag.find(class_=re.compile(r'property[_-]value', re.I)) or tag.find('dd')
                 if label_tag and value_tag:
-                    label_raw = label_tag.get_text(strip=True).lower();
-                    label = re.sub(r':$', '', label_raw).replace(' ', '_')
-                    value_text = value_tag.get_text(strip=True);
-                    value_html = value_tag
+                    label_raw = label_tag.get_text(strip=True).lower(); label = re.sub(r':$', '', label_raw).replace(' ', '_')
+                    # Skip author as it's handled separately now
+                    if 'author' in label: continue
+                    value_text = value_tag.get_text(strip=True); value_html = value_tag
                     if not value_text and not list(value_html.children): continue
 
                     if 'categor' in label:
                         for link in value_html.find_all('a', href=re.compile(r'/category/|/schema/')):
-                            cat_name = link.get_text(strip=True);
-                            href = link.get('href')
+                            cat_name = link.get_text(strip=True); href = link.get('href')
                             cat_url = urljoin(self.base_url, href) if href else None
                             if cat_name: categories_list.append(Category(name=cat_name, url=cat_url))
                     elif 'file' == label or ('size' in label and 'format' in label):
@@ -385,80 +417,47 @@ class ZLibraryAPI:
 
             # Cover Image
             cover_tag = soup.find('img', class_='book-cover-image') or soup.find('img', itemprop='image')
-            if not cover_tag: cover_z_tag = soup.find('z-cover'); cover_tag = cover_z_tag.find(
-                'img') if cover_z_tag else None
+            if not cover_tag: cover_z_tag = soup.find('z-cover'); cover_tag = cover_z_tag.find('img') if cover_z_tag else None
             if cover_tag:
-                src_attr = cover_tag.get('data-src') or cover_tag.get('src')
-                if src_attr:
-                    if '/covers100/' in src_attr:
-                        src_attr = src_attr.replace('/covers100/', '/covers210/')
-                    elif '/covers/s/' in src_attr:
-                        src_attr = src_attr.replace('/covers/s/', '/covers/l/')
-                    elif '/small/' in src_attr:
-                        src_attr = src_attr.replace('/small/', '/medium/')
-                    data_dict['cover_url'] = urljoin(self.base_url, src_attr)
-            # --- End of unchanged parsing logic ---
+                 src_attr = cover_tag.get('data-src') or cover_tag.get('src')
+                 if src_attr:
+                      if '/covers100/' in src_attr: src_attr = src_attr.replace('/covers100/', '/covers210/')
+                      elif '/covers/s/' in src_attr: src_attr = src_attr.replace('/covers/s/', '/covers/l/')
+                      elif '/small/' in src_attr: src_attr = src_attr.replace('/small/', '/medium/')
+                      data_dict['cover_url'] = urljoin(self.base_url, src_attr)
 
-            # --- Download Links (REVISED SECTION) ---
-            # Find the container for download buttons more specifically
-            dl_container = soup.select_one('div.details-buttons-container') or soup.select_one(
-                '.book-actions-buttons') or soup
-
-            # Look specifically for the download button using addDownloadedBook class and /dl/ href
-            primary_dl_link = dl_container.select_one('a.addDownloadedBook[href*="/dl/"]')
+            # Download Links
+            dl_container = soup.select_one('div.details-buttons-container') or soup.select_one('.book-actions-buttons') or soup
+            primary_dl_link = dl_container.select_one('a.addDownloadedBook[href*="/dl/"]') # Using the selector from previous fix
 
             if primary_dl_link and primary_dl_link.get('href'):
-                href = primary_dl_link['href']
-                # Ensure the href is definitely a download link (contains /dl/)
-                if '/dl/' in href:
-                    data_dict['download_url'] = urljoin(self.base_url, href)
-                    button_text = primary_dl_link.get_text(" ", strip=True)
+                 href = primary_dl_link['href']
+                 if '/dl/' in href:
+                     data_dict['download_url'] = urljoin(self.base_url, href)
+                     button_text = primary_dl_link.get_text(" ", strip=True)
+                     if 'file_format' not in data_dict:
+                          fmt_tag = primary_dl_link.find('span', class_='book-property__extension')
+                          if fmt_tag: data_dict['file_format'] = fmt_tag.get_text(strip=True).lower()
+                          else: fmt_match = re.search(r'\(([^,]+),', button_text); data_dict['file_format'] = fmt_match.group(1).strip().lower() if fmt_match else None
+                     if 'file_size' not in data_dict:
+                          size_match = re.search(r'(\d+(\.\d+)?\s*(KB|MB|GB))', button_text, re.I); data_dict['file_size'] = size_match.group(1) if size_match else None
 
-                    # Extract format/size if not already found in properties
-                    if 'file_format' not in data_dict:
-                        # Try specific span first
-                        fmt_tag = primary_dl_link.find('span', class_='book-property__extension')
-                        if fmt_tag:
-                            data_dict['file_format'] = fmt_tag.get_text(strip=True).lower()
-                        else:  # Fallback to parsing text like (pdf, 1.25 MB)
-                            fmt_match = re.search(r'\(([^,]+),', button_text)
-                            if fmt_match: data_dict['file_format'] = fmt_match.group(1).strip().lower()
-
-                    if 'file_size' not in data_dict:
-                        size_match = re.search(r'(\d+(\.\d+)?\s*(KB|MB|GB))', button_text, re.I)
-                        if size_match: data_dict['file_size'] = size_match.group(1)
-                # else:
-                #     print(f"DEBUG: Found addDownloadedBook link, but href '{href}' doesn't contain '/dl/'. Skipping.")
-
-            # --- Other Formats / Conversion (Keep existing logic) ---
+            # Other Formats / Conversion
             other_formats_list: List[DownloadFormat] = []
             formats_container = soup.select_one('.book-details-downloads-container, #bookOtherFormatsContainer')
             if formats_container:
-                # Direct download links for other formats
-                format_links = formats_container.select('a[href*="/dl/"]')  # Simpler selector for alternatives
-                for link in format_links:
-                    href = link.get('href')
+                for link in formats_container.select('a[href*="/dl/"]'):
+                    href = link.get('href'); format_str = "unknown"
                     if href:
-                        format_str = "unknown"
-                        format_tag = link.find(['span', 'div'], class_=re.compile(r'extension|format', re.I))
-                        if format_tag:
-                            format_str = format_tag.get_text(strip=True).lower()
-                        else:
-                            link_text = link.get_text(" ", strip=True);
-                            fmt_match = re.search(r'\(([^,]+),',
-                                                  link_text);
-                            format_str = fmt_match.group(
-                                1).strip().lower() if fmt_match else link_text.split(' ')[0].lower()
-                        other_formats_list.append(DownloadFormat(format=format_str, url=urljoin(self.base_url, href)))
-
-                # Conversion links
-                converter_links = formats_container.select('a[data-convert_to]')
-                for link in converter_links:
+                         format_tag = link.find(['span','div'], class_=re.compile(r'extension|format', re.I))
+                         if format_tag: format_str = format_tag.get_text(strip=True).lower()
+                         else: link_text = link.get_text(" ", strip=True); fmt_match = re.search(r'\(([^,]+),', link_text); format_str = fmt_match.group(1).strip().lower() if fmt_match else link_text.split(' ')[0].lower()
+                         other_formats_list.append(DownloadFormat(format=format_str, url=urljoin(self.base_url, href)))
+                for link in formats_container.select('a[data-convert_to]'):
                     convert_to = link.get('data-convert_to')
-                    if convert_to: other_formats_list.append(
-                        DownloadFormat(format=convert_to.lower(), url='CONVERSION_NEEDED'))
+                    if convert_to: other_formats_list.append(DownloadFormat(format=convert_to.lower(), url='CONVERSION_NEEDED'))
             data_dict['other_formats'] = other_formats_list
-            # --- End of Other Formats logic ---
+            # --- End of Parsing Logic ---
 
             # Construct final object
             valid_keys = BookDetails.__annotations__.keys()
@@ -472,12 +471,10 @@ class ZLibraryAPI:
             return book_details_obj
 
         # --- Error Handling (Remains the same) ---
-        except RateLimitError as e:
-            raise DetailFetchError(f"Fetching details failed: {e}") from e
-        except NetworkError as e:
-            raise DetailFetchError(f"Network error fetching details for {book_url}: {e}") from e
-        except Exception as e:
-            raise ParsingError(f"Failed to parse details page {book_url}: {e}") from e
+        except RateLimitError as e: raise DetailFetchError(f"Fetching details failed: {e}") from e
+        except NetworkError as e: raise DetailFetchError(f"Network error fetching details for {book_url}: {e}") from e
+        except Exception as e: raise ParsingError(f"Failed to parse details page {book_url}: {e}") from e
+
 
     def _check_response_content_type(self, response: requests.Response, url: str):
         """Check if the response content type is valid for a file download."""
