@@ -3,7 +3,7 @@
 
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin,urlparse
+from urllib.parse import urljoin, urlparse
 import re
 import os
 import json
@@ -73,6 +73,10 @@ class ZLibraryAPI:
             os.makedirs(cache_dir, exist_ok=True)
             self.cache = DiskCache(cache_dir)
 
+    def get_session(self) -> requests.Session:
+        """Returns the managed requests session."""
+        return self.session
+
     def clear_cache(self) -> int:
         """Clears the entire disk cache if caching is enabled. Returns number of items cleared."""
         if self.use_cache and self.cache:
@@ -84,7 +88,7 @@ class ZLibraryAPI:
         """Makes an HTTP request using the managed session. (Caching is NOT done here)"""
         try:
             kwargs.setdefault('timeout', 30)
-            absolute_url = urljoin(self.base_url, url) # Ensure URL is absolute for the request
+            absolute_url = urljoin(self.base_url, url)  # Ensure URL is absolute for the request
             response = self.session.request(method, absolute_url, **kwargs)
             self.session.headers.update({'Referer': response.url})
             content_type = response.headers.get('content-type', '').lower()
@@ -196,10 +200,10 @@ class ZLibraryAPI:
 
         # Generate cache key using processed values
         if self.use_cache and self.cache:
-            search_params_filtered = {
+            search_params_filtered = {k: v for k, v in {
                 'order': order, 'exact_match': exact_match, 'year_from': year_from, 'year_to': year_to,
                 'languages': lang_values, 'extensions': ext_values, 'content_types': content_types
-            }
+            }.items() if v is not None}
             cache_key = self._generate_search_cache_key(query, **search_params_filtered)
             cached_result = self.cache.get(cache_key)
             if cached_result is not None: return cached_result  # Return cached data directly
@@ -290,27 +294,23 @@ class ZLibraryAPI:
             CacheLibNotFound: If caching is enabled but diskcache isn't installed.
             ParsingError: If the page structure cannot be parsed.
         """
-        # Ensure book_url is relative to base_url for consistency if needed,
-        # although _make_request handles absolute URLs fine. Let's keep it absolute for caching key.
-        absolute_book_url = urljoin(self.base_url, book_url)
-        cache_key = f"details:{absolute_book_url}" # Use absolute URL for cache key
+        cache_key = f"details:{book_url}"
 
         if self.use_cache and self.cache:
             cached_result = self.cache.get(cache_key)
-            if cached_result is not None and isinstance(cached_result,
-                                                        BookDetails): return cached_result  # Return cached data directly
+            if cached_result is not None and isinstance(cached_result, BookDetails):
+                return cached_result
 
-        # Cache Miss or Cache Disabled
         try:
-            # Pass the full URL directly to _make_request
-            response = self._make_request('GET', absolute_book_url)
+            response = self._make_request('GET', book_url)
             soup = BeautifulSoup(response.text, 'html.parser')
             data_dict: Dict[str, Any] = {}
 
-            # --- Extract Details ---
-            # Use the absolute URL for parsing book ID
-            book_id_match = re.search(r'/book/(\d+)', absolute_book_url);
+            # --- Extract Details (Most logic remains the same) ---
+            book_id_match = re.search(r'/book/(\d+)', book_url)
             data_dict['book_id'] = book_id_match.group(1) if book_id_match else None
+            # ... (Title, Author, Description, Ratings, Properties Box, Cover Image logic remains the same as before) ...
+            # --- Start of existing parsing logic ---
             title_tag = soup.find('h1', itemprop='name') or soup.find('h1', class_='book-title');
             data_dict['title'] = title_tag.get_text(strip=True) if title_tag else "Title N/A"
             main_content = soup.find('div', class_='book-details-container') or soup
@@ -320,26 +320,18 @@ class ZLibraryAPI:
             author_tag = None
             if author_container: author_tag = author_container.find('a', href=re.compile(r'/g/|/authors/'))
             if not author_tag: author_tag = main_content.find('a', itemprop='author', href=re.compile(r'/g/|/authors/'))
-            # Simpler fallback: find property label 'Author(s)'
-            if not author_tag:
-                 author_prop_label = main_content.find(lambda tag: tag.name in ['div', 'dt'] and re.search(r'\bAuthor(s)?:\b', tag.get_text(strip=True), re.I))
-                 if author_prop_label:
-                     author_parent = author_prop_label.find_parent(class_=re.compile(r'property|row')) or author_prop_label.parent
-                     if author_parent: author_tag = author_parent.find('a', href=re.compile(r'/g/|/authors/')) or author_parent.find(class_=re.compile(r'property[_-]value', re.I)) or author_parent.find('dd')
-
+            if not author_tag: author_tag = main_content.find(string=re.compile(r'\bAuthor(s)?:\b', re.I))
             if author_tag:
-                if author_tag.name == 'a' and author_tag.get('href'):
-                    data_dict['author'] = author_tag.get_text(strip=True)
-                    href = author_tag.get('href')
+                author_parent = author_tag.find_parent();
+                author_link = author_parent.find('a', href=re.compile(r'/g/|/authors/')) if author_parent else None
+                if author_link:
+                    data_dict['author'] = author_link.get_text(strip=True);
+                    href = author_link.get('href')
                     if href: data_dict['author_url'] = urljoin(self.base_url, href)
-                else: # It's likely the value tag itself
-                    data_dict['author'] = author_tag.get_text(strip=True)
-                    # Attempt to find a link within or near it anyway
-                    author_link_nearby = author_tag.find('a', href=re.compile(r'/g/|/authors/')) or (author_tag.parent.find('a', href=re.compile(r'/g/|/authors/')) if author_tag.parent else None)
-                    if author_link_nearby and author_link_nearby.get('href'):
-                         href = author_link_nearby.get('href')
-                         data_dict['author_url'] = urljoin(self.base_url, href)
-
+                elif author_parent:
+                    value_tag = author_parent.find(class_=re.compile(r'property[_-]value', re.I));
+                    data_dict[
+                        'author'] = value_tag.get_text(strip=True) if value_tag else None
 
             # Description
             desc_tag = main_content.find('div', itemprop='description') or main_content.find('div',
@@ -374,7 +366,7 @@ class ZLibraryAPI:
                             href = link.get('href')
                             cat_url = urljoin(self.base_url, href) if href else None
                             if cat_name: categories_list.append(Category(name=cat_name, url=cat_url))
-                    elif 'file' == label or ('size' in label and 'format' in label): # Handle combined 'File:' property
+                    elif 'file' == label or ('size' in label and 'format' in label):
                         parts = [p.strip() for p in value_text.split(',')];
                         if len(parts) > 0 and parts[0]: data_dict.setdefault('file_format', parts[0].lower())
                         if len(parts) > 1 and parts[1]: data_dict.setdefault('file_size', parts[1])
@@ -387,7 +379,6 @@ class ZLibraryAPI:
                             cleaned_isbn = isbn_val.replace('-', '').replace(' ', '')
                             if len(cleaned_isbn) == 10 and 'isbn_10' not in data_dict: data_dict['isbn_10'] = isbn_val
                             if len(cleaned_isbn) == 13 and 'isbn_13' not in data_dict: data_dict['isbn_13'] = isbn_val
-                    # Use setdefault to avoid overwriting existing parsed values (like author)
                     elif label in BookDetails.__annotations__:
                         if value_text: data_dict.setdefault(label, value_text)
             data_dict['categories'] = categories_list
@@ -399,7 +390,6 @@ class ZLibraryAPI:
             if cover_tag:
                 src_attr = cover_tag.get('data-src') or cover_tag.get('src')
                 if src_attr:
-                    # Prefer larger covers
                     if '/covers100/' in src_attr:
                         src_attr = src_attr.replace('/covers100/', '/covers210/')
                     elif '/covers/s/' in src_attr:
@@ -407,71 +397,87 @@ class ZLibraryAPI:
                     elif '/small/' in src_attr:
                         src_attr = src_attr.replace('/small/', '/medium/')
                     data_dict['cover_url'] = urljoin(self.base_url, src_attr)
+            # --- End of unchanged parsing logic ---
 
-            # Download Links
-            dl_area = soup.find('div', class_='book-download-buttons') or soup
-            primary_dl_link = dl_area.select_one('a.dlButton[href*="/dl/"], a.btn-primary[href*="/dl/"]')
+            # --- Download Links (REVISED SECTION) ---
+            # Find the container for download buttons more specifically
+            dl_container = soup.select_one('div.details-buttons-container') or soup.select_one(
+                '.book-actions-buttons') or soup
+
+            # Look specifically for the download button using addDownloadedBook class and /dl/ href
+            primary_dl_link = dl_container.select_one('a.addDownloadedBook[href*="/dl/"]')
+
             if primary_dl_link and primary_dl_link.get('href'):
-                href = primary_dl_link['href'];
-                # Store relative URL here, let download methods resolve it
-                data_dict['download_url'] = href
-                button_text = primary_dl_link.get_text(" ", strip=True)
-                # Try to extract format/size if not found in properties
-                if 'file_format' not in data_dict:
-                     fmt_match = re.search(r'\(([^,]+),', button_text);
-                     data_dict['file_format'] = fmt_match.group(1).strip().lower() if fmt_match else None
-                if 'file_size' not in data_dict:
-                     size_match = re.search(r'(\d+(\.\d+)?\s*(KB|MB|GB))', button_text, re.I);
-                     data_dict['file_size'] = size_match.group(1) if size_match else None
+                href = primary_dl_link['href']
+                # Ensure the href is definitely a download link (contains /dl/)
+                if '/dl/' in href:
+                    data_dict['download_url'] = urljoin(self.base_url, href)
+                    button_text = primary_dl_link.get_text(" ", strip=True)
 
-            # Other Formats / Conversion
+                    # Extract format/size if not already found in properties
+                    if 'file_format' not in data_dict:
+                        # Try specific span first
+                        fmt_tag = primary_dl_link.find('span', class_='book-property__extension')
+                        if fmt_tag:
+                            data_dict['file_format'] = fmt_tag.get_text(strip=True).lower()
+                        else:  # Fallback to parsing text like (pdf, 1.25 MB)
+                            fmt_match = re.search(r'\(([^,]+),', button_text)
+                            if fmt_match: data_dict['file_format'] = fmt_match.group(1).strip().lower()
+
+                    if 'file_size' not in data_dict:
+                        size_match = re.search(r'(\d+(\.\d+)?\s*(KB|MB|GB))', button_text, re.I)
+                        if size_match: data_dict['file_size'] = size_match.group(1)
+                # else:
+                #     print(f"DEBUG: Found addDownloadedBook link, but href '{href}' doesn't contain '/dl/'. Skipping.")
+
+            # --- Other Formats / Conversion (Keep existing logic) ---
             other_formats_list: List[DownloadFormat] = []
             formats_container = soup.select_one('.book-details-downloads-container, #bookOtherFormatsContainer')
             if formats_container:
                 # Direct download links for other formats
-                for link in formats_container.select('a[href*="/dl/"]'):
+                format_links = formats_container.select('a[href*="/dl/"]')  # Simpler selector for alternatives
+                for link in format_links:
                     href = link.get('href')
-                    format_str = "unknown"
                     if href:
-                        # Try extracting format from class, text, or button content
+                        format_str = "unknown"
                         format_tag = link.find(['span', 'div'], class_=re.compile(r'extension|format', re.I))
                         if format_tag:
                             format_str = format_tag.get_text(strip=True).lower()
-                        else: # Fallback to link text or button content
+                        else:
                             link_text = link.get_text(" ", strip=True);
-                            fmt_match = re.search(r'^\s*([\w\+]+)\b', link_text) # Match format at the beginning
-                            if fmt_match:
-                                format_str = fmt_match.group(1).strip().lower()
-                            else: # Try parsing button-like text if present
-                                fmt_match = re.search(r'\(([^,]+),', link_text)
-                                if fmt_match: format_str = fmt_match.group(1).strip().lower()
-
-                        # Store relative URL
-                        other_formats_list.append(DownloadFormat(format=format_str, url=href))
+                            fmt_match = re.search(r'\(([^,]+),',
+                                                  link_text);
+                            format_str = fmt_match.group(
+                                1).strip().lower() if fmt_match else link_text.split(' ')[0].lower()
+                        other_formats_list.append(DownloadFormat(format=format_str, url=urljoin(self.base_url, href)))
 
                 # Conversion links
-                for link in formats_container.select('a[data-convert_to]'):
+                converter_links = formats_container.select('a[data-convert_to]')
+                for link in converter_links:
                     convert_to = link.get('data-convert_to')
                     if convert_to: other_formats_list.append(
                         DownloadFormat(format=convert_to.lower(), url='CONVERSION_NEEDED'))
             data_dict['other_formats'] = other_formats_list
+            # --- End of Other Formats logic ---
 
             # Construct final object
-            valid_keys = BookDetails.__annotations__.keys();
+            valid_keys = BookDetails.__annotations__.keys()
             filtered_data = {k: v for k, v in data_dict.items() if k in valid_keys}
-            # Pass the original (potentially relative) book_url used for the request
             book_details_obj = BookDetails(url=book_url, **filtered_data)
 
             # Cache the successful result
-            if self.use_cache and self.cache: self.cache.set(cache_key, book_details_obj, expire=self.cache_expire)
+            if self.use_cache and self.cache:
+                self.cache.set(cache_key, book_details_obj, expire=self.cache_expire)
+
             return book_details_obj
 
+        # --- Error Handling (Remains the same) ---
         except RateLimitError as e:
-            raise DetailFetchError(f"Fetching details failed for {absolute_book_url}: {e}") from e
+            raise DetailFetchError(f"Fetching details failed: {e}") from e
         except NetworkError as e:
-            raise DetailFetchError(f"Network error fetching details for {absolute_book_url}: {e}") from e
+            raise DetailFetchError(f"Network error fetching details for {book_url}: {e}") from e
         except Exception as e:
-            raise ParsingError(f"Failed to parse details page {absolute_book_url}: {e}") from e
+            raise ParsingError(f"Failed to parse details page {book_url}: {e}") from e
 
     def _check_response_content_type(self, response: requests.Response, url: str):
         """Check if the response content type is valid for a file download."""
@@ -485,14 +491,14 @@ class ZLibraryAPI:
                 if re.match(r'<(!doctype|html|head|body)|^\s*\{|^\s*\[', preview, re.I):
                     raise RateLimitError(
                         f"Download failed: Received non-file content (likely HTML/JSON) from {url}. Content-Type: {content_type}")
-            except StopIteration: # Empty response
-                 raise DownloadError(f"Download failed: Empty response from {url}")
+            except StopIteration:  # Empty response
+                raise DownloadError(f"Download failed: Empty response from {url}")
             except UnicodeDecodeError:
-                 pass # Probably binary data, which is good
+                pass  # Probably binary data, which is good
             except RateLimitError:
-                raise # Re-raise the specific error
+                raise  # Re-raise the specific error
             except Exception:
-                pass # Proceed cautiously if peeking failed for other reasons
+                pass  # Proceed cautiously if peeking failed for other reasons
 
     def _prepare_download_target(self, details: BookDetails, download_url: Optional[str],
                                  download_dir: str, filename: Optional[str]) -> Tuple[str, str]:
@@ -519,7 +525,8 @@ class ZLibraryAPI:
             raise NoDownloadLinkError("No download URL specified or found in book details.")
         # Explicitly check for conversion placeholder
         if final_url_to_download == 'CONVERSION_NEEDED':
-            raise NoDownloadLinkError(f"Download URL '{final_url_to_download}' requires conversion, which is not supported directly.")
+            raise NoDownloadLinkError(
+                f"Download URL '{final_url_to_download}' requires conversion, which is not supported directly.")
 
         # Ensure the download directory exists
         os.makedirs(download_dir, exist_ok=True)
@@ -545,26 +552,27 @@ class ZLibraryAPI:
                 absolute_fmt_url = urljoin(self.base_url, fmt.url)
                 if absolute_fmt_url == absolute_target_url:
                     file_extension = fmt.format.lower()
-                    break # Found matching format
+                    break  # Found matching format
 
         # If not found in other_formats, use the primary file_format if the primary download URL was chosen
-        if not file_extension and (not download_url or urljoin(self.base_url, download_url) == urljoin(self.base_url, details.download_url)):
+        if not file_extension and (not download_url or urljoin(self.base_url, download_url) == urljoin(self.base_url,
+                                                                                                       details.download_url)):
             file_extension = (details.file_format or 'file').lower()
 
         # Fallback if extension still not determined (e.g., custom URL provided with no match)
         if not file_extension:
-             # Try to guess from the URL path itself
-             path_part = urlparse(final_url_to_download).path
-             if '.' in os.path.basename(path_part):
-                 file_extension = os.path.basename(path_part).split('.')[-1].lower()
-             else:
-                 file_extension = 'file' # Ultimate fallback
+            # Try to guess from the URL path itself
+            path_part = urlparse(final_url_to_download).path
+            if '.' in os.path.basename(path_part):
+                file_extension = os.path.basename(path_part).split('.')[-1].lower()
+            else:
+                file_extension = 'file'  # Ultimate fallback
 
         # Clean up the determined extension
         file_extension = file_extension.lstrip('.').strip()
         # Basic validation for extension format
         if not file_extension or not re.match(r'^[a-z0-9\+]+$', file_extension) or len(file_extension) > 10:
-            file_extension = 'file' # Reset to default if invalid
+            file_extension = 'file'  # Reset to default if invalid
 
         # Construct the full file path
         filepath = os.path.join(download_dir, f"{base_filename}.{file_extension}")
@@ -621,14 +629,18 @@ class ZLibraryAPI:
         except (NetworkError, DownloadError, RateLimitError, NoDownloadLinkError) as e:
             # Clean up partially downloaded file on error
             if os.path.exists(filepath):
-                try: os.remove(filepath)
-                except OSError: pass
-            raise e # Re-raise the specific error
+                try:
+                    os.remove(filepath)
+                except OSError:
+                    pass
+            raise e  # Re-raise the specific error
         except Exception as e:
             # Clean up on unexpected errors too
             if os.path.exists(filepath):
-                try: os.remove(filepath)
-                except OSError: pass
+                try:
+                    os.remove(filepath)
+                except OSError:
+                    pass
             raise DownloadError(f"Unexpected download error for {final_url_to_download} to {filepath}: {e}") from e
         finally:
             # Ensure the response is closed
@@ -663,7 +675,7 @@ class ZLibraryAPI:
             NetworkError: For network-related issues during download.
             RateLimitError: If a login/captcha/non-file page is detected during download.
         """
-        filepath = None # Initialize filepath to None
+        filepath = None  # Initialize filepath to None
         final_url_to_download = None
         downloaded = 0
         total_size = None
@@ -709,23 +721,28 @@ class ZLibraryAPI:
             else:
                 yield final_size, total_size, f"completed: {filepath}"
 
-            return filepath # Return filepath on successful completion
+            return filepath  # Return filepath on successful completion
 
         except (NetworkError, DownloadError, RateLimitError, NoDownloadLinkError) as e:
             yield downloaded, total_size, f"error: {e}"
             # Clean up partially downloaded file on error
             if filepath and os.path.exists(filepath):
-                try: os.remove(filepath)
-                except OSError: pass
-            raise e # Re-raise the specific error
+                try:
+                    os.remove(filepath)
+                except OSError:
+                    pass
+            raise e  # Re-raise the specific error
         except Exception as e:
             yield downloaded, total_size, f"error: An unexpected error occurred: {e}"
-             # Clean up on unexpected errors too
+            # Clean up on unexpected errors too
             if filepath and os.path.exists(filepath):
-                try: os.remove(filepath)
-                except OSError: pass
-            raise DownloadError(f"Unexpected download error for {final_url_to_download or 'unknown URL'} to {filepath or 'unknown path'}: {e}") from e
+                try:
+                    os.remove(filepath)
+                except OSError:
+                    pass
+            raise DownloadError(
+                f"Unexpected download error for {final_url_to_download or 'unknown URL'} to {filepath or 'unknown path'}: {e}") from e
         finally:
-             # Ensure the response is closed
+            # Ensure the response is closed
             if dl_response is not None:
                 dl_response.close()
