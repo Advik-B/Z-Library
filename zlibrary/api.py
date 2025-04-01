@@ -41,9 +41,9 @@ class ZLibraryAPI:
 
     def __init__(self,
                  base_url: str = DEFAULT_BASE_URL,
-                 session: Optional[requests.Session] = None,
+                 session: Optional[requests. Session] = None,
                  use_cache: bool = True,
-                 cache_dir: str = ".zlib_cache",
+                 cache_dir: str = ".zlibrary_cache",
                  cache_expire: Optional[int] = 3600 * 24  # Cache expiry in seconds (default: 1 day)
                  ):
         """
