@@ -27,10 +27,9 @@ api = ZLibraryAPI() # Use defaults for this example
 try:
     print("Searching for popular Python books (EPUB/PDF)...")
     search_results = api.search(
-        query="Python Programming",
-        # order=OrderOptions.POPULAR,
-        languages=[Language.ENGLISH],
-        extensions=[Extension.PDF] # Pass a list of enums
+        query="Python",
+        # languages=[Language.ENGLISH],
+        # extensions=[Extension.PDF] # Pass a list of enums
         # Alternatively, use strings: extensions=['epub', 'pdf']
     )
 
@@ -50,7 +49,7 @@ try:
         print(f"  Format: {details.file_format}")
         print(f"  Size: {details.file_size}")
         print(f"  ISBN-13: {details.isbn_13}")
-        print(f"  Description: {details.description[:150]}...") # Uncomment for snippet
+        # print(f"  Description: {details.description[:150]}...") # Uncomment for snippet
         print(f"  Download Link: {details.download_url}")
 
 except ZLibraryException as e:
