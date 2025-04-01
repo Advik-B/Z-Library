@@ -28,7 +28,7 @@ try:
     print("Searching for popular Python books (EPUB/PDF)...")
     search_results = api.search(
         query="Python",
-        # languages=[Language.ENGLISH],
+        languages=[Language.ENGLISH],
         # extensions=[Extension.PDF] # Pass a list of enums
         # Alternatively, use strings: extensions=['epub', 'pdf']
     )
